@@ -3,7 +3,7 @@
 class MyPlanningANDControl : public rclcpp::Node
 {
 public:
-  MyPlanningANDControl() : Node("my_planning_and_control"),MIN_DISTANCE_PERCENTAGE(0.5),_buffer_size(5)
+  MyPlanningANDControl() : Node("my_planning_and_control"),MIN_DISTANCE_PERCENTAGE(0.5)
   {
     //主车名字
 
@@ -21,7 +21,7 @@ public:
     _reference_line_generator = std::make_shared<ReferenceLine>();//参考线生成器
     _reference_line = std::make_shared<std::vector<PathPoint>>();
     _planning_timer = this->create_wall_timer(std::chrono::milliseconds(int(_planning_time_step*1000)),std::bind(&MyPlanningANDControl::planning_run_step,this));
-
+    _emplanner = std::make_shared<EMPlanner>();
 
     //订阅方
     //创建里程计订阅方，订阅车辆当前位姿消息
@@ -37,6 +37,12 @@ public:
       10,
       std::bind(&MyPlanningANDControl::imu_cb,this,std::placeholders::_1)
     );
+    //创建车辆信息订阅方，订阅车辆id号
+    _ego_info_subscriber = this->create_subscription<carla_msgs::msg::CarlaEgoVehicleInfo>(
+      "/carla/ego_vehicle/vehicle_info",
+      10,
+      std::bind(&MyPlanningANDControl::ego_info_cb,this,std::placeholders::_1)
+    );
     
     //创建期望速度订阅方
     _target_speed_subscriber = this->create_subscription<std_msgs::msg::Float64>(
@@ -51,6 +57,11 @@ public:
         "/carla/" + role_name + "/waypoints",
         10,
         std::bind(&MyPlanningANDControl::path_cb,this,std::placeholders::_1)
+    );
+    _object_array_subscriber = this->create_subscription<derived_object_msgs::msg::ObjectArray>(
+      "/carla/ego_vehicle/objects",
+      10,
+      std::bind(&MyPlanningANDControl::objects_cb,this,std::placeholders::_1)
     );
 
 
@@ -69,17 +80,17 @@ public:
       10
     );
 
-    _current_ego_state = std::make_shared<VehicleState>();
 
-    _current_ego_state->x = 0.0;
-    _current_ego_state->y = 0.0;
-    _current_ego_state->v = 0.0;
-    _current_ego_state->a = 0.0;
-    _current_ego_state->heading = 0.0;
-    _current_ego_state->omega = 0.0;
-    _current_ego_state->alpha = 0.0;
+    _current_ego_state = std::make_shared<VehicleState>();
     _current_ego_state->flag_imu = false;
     _current_ego_state->flag_ode = false;
+    _current_ego_state->flag_info = false;
+
+    //绘图
+    #ifdef PLOT
+    _reference_line_figure_handle = matplot::figure();
+    _final_path_figure_handle = matplot::figure();
+    #endif
   }
 
 private:
@@ -90,21 +101,22 @@ private:
   //订阅方以及订阅的数据
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr _odometry_subscriber;//里程计订阅方，订阅本车当前位姿与速度
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr _imu_subscriber;//惯性导航订阅方，订阅加速度与角速度
+  rclcpp::Subscription<carla_msgs::msg::CarlaEgoVehicleInfo>::SharedPtr _ego_info_subscriber;//定于车辆的车道信息
   std::shared_ptr<VehicleState> _current_ego_state;
+  rclcpp::Subscription<derived_object_msgs::msg::ObjectArray>::SharedPtr _object_array_subscriber;//对象序列，包含本车和障碍物
+  std::vector<derived_object_msgs::msg::Object> _object_arrry;
 
-  rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr _target_speed_subscriber;
+  rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr _target_speed_subscriber;//期望速度订阅方
   double _target_speed;//期望速度,单位为km/h
 
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr _path_subscriber;//路径订阅方
-  int _buffer_size;//路径点缓存大小
-  std::deque<geometry_msgs::msg::PoseStamped> _path_buffer;//路径点缓存容器
-  std::deque<geometry_msgs::msg::PoseStamped> _path_deque;//整条路径存储容器
   std::shared_ptr<std::vector<PathPoint>> _global_path;//全局路径存储器
 
   //发布方
   rclcpp::Publisher<carla_msgs::msg::CarlaEgoVehicleControl>::SharedPtr _control_cmd_publisher;//控制指令发布方
   rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr _targer_pose_publisher;//目标点发布方
   rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr _reference_line_publisher;
+
 
   //控制环节
   std::shared_ptr<LongitudinalPIDController> _longitudinal_pid_controller;//纵向控制器
@@ -118,6 +130,14 @@ private:
   rclcpp::TimerBase::SharedPtr _planning_timer;
   std::shared_ptr<ReferenceLine> _reference_line_generator;
   std::shared_ptr<std::vector<PathPoint>> _reference_line;
+  std::shared_ptr<EMPlanner> _emplanner;
+
+  //绘图
+  #ifdef PLOT
+  size_t _count_plot = 0;
+  matplot::figure_handle _reference_line_figure_handle;
+  matplot::figure_handle _final_path_figure_handle;
+  #endif
 
 
 public:
@@ -128,6 +148,7 @@ public:
   {
     _current_ego_state->x = msg->pose.pose.position.x;
     _current_ego_state->y = msg->pose.pose.position.y;
+    _current_ego_state->z = msg->pose.pose.position.z;
     _current_ego_state->v = std::sqrt(std::pow(msg->twist.twist.linear.x,2) 
                             +  std::pow(msg->twist.twist.linear.y,2)
                             +  std::pow(msg->twist.twist.linear.z,2));
@@ -135,19 +156,22 @@ public:
     tf2::fromMsg(msg->pose.pose.orientation,tf_q);
     double roll,pitch,yaw;
     tf2::Matrix3x3(tf_q).getRPY(roll,pitch,yaw);
-    _current_ego_state->heading = yaw;
+    _current_ego_state->heading = tf2NormalizeAngle(yaw);
     _current_ego_state->flag_ode = true;
-    //RCLCPP_INFO(this->get_logger(),"yaw=%.4f,tf_q_angle%.4f",yaw,tf_q.getAngle());
     //里程计的单位是m/s，转化为km/h
   }
 
   void imu_cb(sensor_msgs::msg::Imu::SharedPtr imu_msg)
   {
-    _current_ego_state->a = std::sqrt(std::pow(imu_msg->linear_acceleration.x,2) + 
-                                      std::pow(imu_msg->linear_acceleration.y,2) +
-                                      std::pow(imu_msg->linear_acceleration.z,2) );
-
+    _current_ego_state->ax = imu_msg->linear_acceleration.x;
+    _current_ego_state->ay = imu_msg->linear_acceleration.y;
     _current_ego_state->flag_imu = true;
+  }
+
+  void ego_info_cb(carla_msgs::msg::CarlaEgoVehicleInfo::SharedPtr ego_info)
+  {
+    _current_ego_state->id = ego_info->id;
+    _current_ego_state->flag_info = true;
   }
 
   //速度指令订阅方回调函数，获取有ad_agent发布的速度指令
@@ -159,22 +183,30 @@ public:
   void path_cb(nav_msgs::msg::Path::SharedPtr waypoints)
   {
     RCLCPP_INFO(this->get_logger(),"接收到全局路径信息......");
-    _path_buffer.clear();
-    _path_deque.clear();
     for (auto &&pose : waypoints->poses)
     {
-      //RCLCPP_INFO(this->get_logger(),"目标位置(%.2f,%.2f)",pose.pose.position.x,pose.pose.position.y);
-      _path_deque.push_back(pose);
 
       PathPoint temp_path_point;
       temp_path_point.x = pose.pose.position.x;
       temp_path_point.y = pose.pose.position.y;
       _global_path->push_back(temp_path_point);
- 
 
     }
     Calculate_heading_and_kappa(_global_path); 
   }//全局路径订阅回调
+
+
+  void objects_cb(derived_object_msgs::msg::ObjectArray::SharedPtr object_array)
+  {
+    _object_arrry.clear();
+    for (auto &&object : object_array->objects)
+    {
+      _object_arrry.push_back(object);
+    }
+    
+  }
+
+
 
   void planning_run_step()//单步规划
   {
@@ -184,22 +216,19 @@ public:
       return;
     }
     //等待接受到主车信息
-    if(_current_ego_state->flag_imu == false || _current_ego_state->flag_ode == false)
+    if(_current_ego_state->flag_imu == false || _current_ego_state->flag_ode == false || _current_ego_state->flag_info == false)
     {
       RCLCPP_INFO(this->get_logger(),"等待主车信息......");
       return;
     }
 
-    // for (auto &&pathpoint : *_global_path)
-    // {
-    //   RCLCPP_INFO(this->get_logger(),"(%.2f,%.2f)",pathpoint.x,pathpoint.y);
-    // }
-    
     //获取参考线
     _reference_line->clear();
     if(_reference_line_generator->run_step(_current_ego_state,_global_path,_reference_line))
     {
+      #ifdef MAIN_DEBUG
       RCLCPP_INFO(this->get_logger(),"参考线生成成功！");
+      #endif
     }
     else
     {
@@ -221,20 +250,44 @@ public:
     
     _reference_line_publisher->publish(nav_reference_line);
 
+    #ifdef PLOT
+    //绘图，因为rviz的可视化没整明白
+    if(_count_plot % 20 == 0)
+    {
+      matplot::figure(_reference_line_figure_handle);
+      matplot::cla();
+      std::vector<double> global_x,global_y,reference_x,reference_y;
+      for (auto &&path_point : *_global_path)
+      {
+        global_x.push_back(path_point.x);
+        global_y.push_back(path_point.y);
+      }
 
+      //matplot::hold(false);
+      matplot::plot(global_x,global_y,"go");
+      matplot::hold(true);
+      for (auto &&path_point : *_reference_line)
+      {
+        reference_x.push_back(path_point.x);
+        reference_y.push_back(path_point.y);
+      }
+      matplot::plot(reference_x,reference_y,"--rx");
+      matplot::hold(false);
+      //h->draw();
+    }
+    _count_plot++ ;
+    #endif
+
+
+    //调用emplanner获取轨迹
+    auto current_time = this->get_clock()->now();
+    _emplanner->planning_run_step(_reference_line,_current_ego_state,_object_arrry,current_time);
   }
-
 
   void control_run_step()//单步控制
   {
     //没收到路径信息
-    if((_path_buffer.empty())&&(_path_deque.empty()))
-    {
-      RCLCPP_INFO(this->get_logger(),"等待路径信息......");
-      emergency_stop();
-      return;
-    }
-    if(_current_ego_state->flag_imu == false || _current_ego_state->flag_ode == false)
+    if(_current_ego_state->flag_imu == false || _current_ego_state->flag_ode == false ||_current_ego_state->flag_info == false)
     {
       RCLCPP_INFO(this->get_logger(),"等待主车信息......");
       return;
@@ -250,37 +303,10 @@ public:
       emergency_stop();
       return;
     }
-    //将路径点缓存一下,其实这里有一个问题，可能会把_path_deque里面取空
-    if(_path_buffer.empty())
-    {
 
-      
-      for(int i=0 ; i<_buffer_size ; i++)
-      {
-        _path_buffer.push_back(_path_deque[0]);
-        _path_deque.pop_front();
-      }
-
-    }
-
-    auto target_pose = _path_buffer[0];
     //转换为轨迹点
-    tf2::Quaternion tf2_q1,tf2_q2;
-    tf2::fromMsg(target_pose.pose.orientation,tf2_q1);
-    tf2::fromMsg(_path_buffer[1].pose.orientation,tf2_q2);
-    double roll1, pitch1,yaw1;
-    double roll2, pitch2,yaw2;
-    tf2::Matrix3x3(tf2_q1).getRPY(roll1,pitch1,yaw1);
-    tf2::Matrix3x3(tf2_q2).getRPY(roll2,pitch2,yaw2);
-
-    TrajectoryPoint match_point;
-    // match_point.x = target_pose.pose.position.x;
-    // match_point.y = target_pose.pose.position.y;
-    // match_point.v = _target_speed;
-    // match_point.heading = yaw1;
-    // match_point.kappa = (yaw2-yaw1)/(std::hypot(target_pose.pose.position.x - _path_buffer[1].pose.position.x,
-    //                                             target_pose.pose.position.y - _path_buffer[1].pose.position.y));
     //确定匹配点
+    TrajectoryPoint match_point;
     double min_distance_match_point = 1e10;
     double distance_match_point = 0;
     int match_point_index = 0;
@@ -300,19 +326,21 @@ public:
     match_point.kappa = _reference_line->at(match_point_index).kappa;
     match_point.v = _target_speed;
     
+    #ifdef MAIN_DEBUG
     RCLCPP_INFO(this->get_logger(),"当前位姿(%.3f,%.3f,%.3f),期望位姿(%.3f,%.3f,%.3f)",
                 _current_ego_state->x,_current_ego_state->y,_current_ego_state->heading,
                 match_point.x,match_point.y,match_point.heading);
     RCLCPP_INFO(this->get_logger(),"参考线起点位姿(%.3f,%.3f,%.3f),参考线终点位姿(%.3f,%.3f,%.3f)",
                 _reference_line->at(0).x,_reference_line->at(0).y,_reference_line->at(0).heading,
                 _reference_line->back().x,_reference_line->back().y,_reference_line->back().heading);
+
+    #endif
     
     //RCLCPP_INFO(this->get_logger(),"目标位置(%.2f,%.2f)",target_pose.pose.position.x,target_pose.pose.position.y);
     //****发布标记
     visualization_msgs::msg::Marker marker;
     marker.type = 0;
     marker.header.frame_id = "map";
-    marker.pose = target_pose.pose;
     marker.scale.x = 1.0;
     marker.scale.y = 0.2;
     marker.scale.z = 0.2;
@@ -332,32 +360,8 @@ public:
     
     _control_cmd_publisher->publish(control_msg);
 
-  //-------------------------------------------------------------可删除
-  //清除落后的路径点,这里感觉有问题，应该根据方向来去除点
-  //   int max_index = -1;
-  //   double sampling_radius = _target_speed / 3.6;
-  //   double min_distance = sampling_radius * MIN_DISTANCE_PERCENTAGE;
-  //   double distance;
-  //   for(int i = 0 ; i<(int)_path_buffer.size() ; i++)//这里不能一次取5个，取两次就空了
-  //   {
-  //     distance = std::hypot(_current_ego_state->x - _path_buffer[i].pose.position.x,
-  //                           _current_ego_state->y - _path_buffer[i].pose.position.y) ;
-  //     if (distance < min_distance)
-  //     {
-  //       max_index = i;
-  //     }
-  //   }
-  //   if (max_index >= 0)
-  //   {
-  //     for (int i = 0; i <= max_index; i++)
-  //     {
-  //       _path_buffer.pop_front();
-  //     } 
-  //   }
-  //--------------------------------------------------------------------
+
   }
-
-
 
   //发布紧急制动指令
   void emergency_stop()

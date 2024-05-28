@@ -157,6 +157,71 @@
                     "id": "control"
                 }
             ]
+        },
+        {
+            "type":"vehicle.audi.etron",
+            "id":"vehicle_1"
+        },
+        {
+            "type":"vehicle.audi.etron",
+            "id":"vehicle_2"
+        },
+        {
+            "type":"vehicle.audi.etron",
+            "id":"vehicle_3"
+        },
+        {
+            "type":"vehicle.audi.etron",
+            "id":"vehicle_4"
+        },
+        {
+            "type":"vehicle.audi.etron",
+            "id":"vehicle_5"
+        },
+        {
+            "type":"vehicle.audi.etron",
+            "id":"vehicle_6"
+        },
+        {
+            "type":"vehicle.nissan.micra",
+            "id":"vehicle_7"
+        },
+        {
+            "type":"vehicle.nissan.micra",
+            "id":"vehicle_8"
+        },
+        {
+            "type":"vehicle.nissan.micra",
+            "id":"vehicle_9"
+        },
+        {
+            "type":"vehicle.nissan.micra",
+            "id":"vehicle_10"
+        },
+        {
+            "type":"vehicle.nissan.micra",
+            "id":"vehicle_11"
+        },
+        {
+            "type":"vehicle.nissan.micra",
+            "id":"vehicle_12"
+        },
+        {
+            "type":"vehicle.audi.etron",
+            "id":"vehicle_13"
+        },
+        {
+            "type":"vehicle.audi.etron",
+            "id":"vehicle_14"
+        },
+        {
+            "type":"vehicle.audi.etron",
+            "id":"vehicle_15"
+        },
+        {
+            "type":"vehicle.audi.etron",
+            "id":"vehicle_16"
         }
+
     ]
 }

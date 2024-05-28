@@ -11,11 +11,11 @@ ReferenceLine::ReferenceLine()
     //参考线平滑
     _smooth_solver = std::make_shared<OsqpEigen::Solver>();//创建求解器
     _smooth_solver->settings()->setWarmStart(true);//求解器热启动
-    _cost_smooth = 5;
-    _cost_geometry = 10;
-    _cost_compact = 50;
-    _max_x_offset = 0.5;
-    _max_y_offset = 0.5;
+    _cost_smooth = 5;//平滑代价
+    _cost_geometry = 10;//几何相似代价
+    _cost_compact = 50;//紧凑代价
+    _max_x_offset = 0.5;//x方向最大偏移量
+    _max_y_offset = 0.5;//y方向最大偏移量
 }
 
 bool ReferenceLine::run_step(std::shared_ptr<VehicleState> current_ego_state, std::shared_ptr<std::vector<PathPoint>> global_path,
@@ -38,7 +38,7 @@ bool ReferenceLine::run_step(std::shared_ptr<VehicleState> current_ego_state, st
                 count_num = 0;
             }
             count_num++;
-            if(count_num > 50)
+            if(count_num > 50)//向后50个都没有比它近的就先退出
             {
                 break;
             }

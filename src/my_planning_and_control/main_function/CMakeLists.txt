@@ -33,10 +33,13 @@ find_package(sensor_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(OsqpEigen REQUIRED)
+find_package(Matplot++ REQUIRED)
+find_package(carla_waypoint_types REQUIRED)
 
 aux_source_directory(${CMAKE_CURRENT_SOURCE_DIR}/../controller_modules/src SRC_CONTROL)
 aux_source_directory(${CMAKE_CURRENT_SOURCE_DIR}/../planner_modules/src SRC_PLANNING)
 aux_source_directory(${CMAKE_CURRENT_SOURCE_DIR}/../general_modules/src SRC_GENERAL)
+#message(ERROR ${SRC_PLANNING})
 add_executable(main_function src/main_function.cpp ${SRC_CONTROL} ${SRC_PLANNING} ${SRC_GENERAL})
 
 target_include_directories(main_function PUBLIC
@@ -58,12 +61,14 @@ ament_target_dependencies(
   "sensor_msgs"
   "tf2"
   "tf2_geometry_msgs"
+  "carla_waypoint_types"
 )
 
 
 target_link_libraries(
   main_function
   OsqpEigen::OsqpEigen
+  Matplot++::matplot
 )
 
 install(TARGETS main_function

@@ -74,7 +74,7 @@ class CarlaToRosWaypointConverter(CompatibleNode):
             self.get_actor_waypoint)
 
         # set initial goal
-        self.goal = self.world.get_map().get_spawn_points()[0]
+        self.goal = self.world.get_map().get_spawn_points()[-1]
 
         self.current_route = None
         self.goal_subscriber = self.new_subscription(
@@ -112,6 +112,7 @@ class CarlaToRosWaypointConverter(CompatibleNode):
         response.waypoint.road_id = carla_waypoint.road_id
         response.waypoint.section_id = carla_waypoint.section_id
         response.waypoint.lane_id = carla_waypoint.lane_id
+        response.waypoint.lane_width = carla_waypoint.lane_width
         return response
 
     def get_actor_waypoint(self, req, response=None):

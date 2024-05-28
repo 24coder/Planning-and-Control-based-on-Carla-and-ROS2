@@ -1,6 +1,6 @@
 #include "lateral_lqr_controller.h"
 
-auto LOG = rclcpp::get_logger("laterl_lqr_controller");
+
 
 LaterLQRController::LaterLQRController()
 {
@@ -45,6 +45,7 @@ LaterLQRController::LaterLQRController()
 double LaterLQRController::run_step(const TrajectoryPoint& match_point, const VehicleState& current_ego_state,
                                     const double& control_time_step)
 {
+    auto LOG = rclcpp::get_logger("laterl_lqr_controller");
     //1.创建状态矩阵
     _vx = current_ego_state.v + 1e-4;//除0保护,这里这个v还不确定对不对，要不要做一个投影
     _matrix_A(0,1) = 1.0;
@@ -114,8 +115,10 @@ double LaterLQRController::run_step(const TrajectoryPoint& match_point, const Ve
     //7.计算方向盘转角
 
     double steer = -u;//前轮转角计算出负值应该是右转，所以有一个负号。
+    #ifdef CONTROL_DEBUG
     RCLCPP_INFO(LOG,"横向误差(%.3f,%.3f,%.3f,%.3f),输出(%.3f)",_matrix_err[0],_matrix_err[1],
             _matrix_err[2],_matrix_err[3],std::min(std::max(steer,-1.0),1.0));
+    #endif
     return std::min(std::max(steer,-1.0),1.0);
 
 }
@@ -123,6 +126,7 @@ double LaterLQRController::run_step(const TrajectoryPoint& match_point, const Ve
 bool LaterLQRController::SolveLQRFeedack(const Eigen::MatrixXd& A,const Eigen::MatrixXd& B,const Eigen::MatrixXd& Q,
                                 const Eigen::MatrixXd& R,const int& iter_max,const double& tolerance)
 {
+    auto LOG = rclcpp::get_logger("laterl_lqr_controller");
     //判断输入矩阵的维数是否正确
     if(A.rows()!=A.cols() || B.rows()!=A.rows() || Q.rows()!=Q.cols() || Q.rows()!=A.rows() || R.cols()!=B.cols())
     {

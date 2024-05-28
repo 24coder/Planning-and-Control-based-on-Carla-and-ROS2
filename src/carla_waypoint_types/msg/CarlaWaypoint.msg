@@ -8,5 +8,6 @@
 int32 road_id
 int32 section_id
 int32 lane_id
+float64 lane_width
 bool is_junction
 geometry_msgs/Pose pose
