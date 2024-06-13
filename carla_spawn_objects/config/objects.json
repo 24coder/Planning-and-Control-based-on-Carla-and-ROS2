@@ -221,7 +221,22 @@
         {
             "type":"vehicle.audi.etron",
             "id":"vehicle_16"
+        },
+        {
+            "type":"vehicle.audi.etron",
+            "id":"vehicle_17"
+        },
+        {
+            "type":"vehicle.audi.etron",
+            "id":"vehicle_18"
+        },
+        {
+            "type":"vehicle.audi.etron",
+            "id":"vehicle_19"
+        },
+        {
+            "type":"vehicle.audi.etron",
+            "id":"vehicle_20"
         }
-
     ]
 }

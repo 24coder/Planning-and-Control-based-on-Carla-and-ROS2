@@ -27,12 +27,12 @@ LaterLQRController::LaterLQRController()
     _matrix_B(1,0) = -_cf/_m;
     _matrix_B(3,0) = -_a*_cf/_Iz;
 
-    _matrix_R(0,0) = 5;//输入权重
+    _matrix_R(0,0) = 2;//输入权重
     
-    _matrix_Q(0,0) = 1;//横向距离误差权重
+    _matrix_Q(0,0) = 5;//横向距离误差权重
     _matrix_Q(1,1) = 1.5;//横向距离误差导数权重
-    _matrix_Q(2,2) = 3;//横向角度误差权重
-    _matrix_Q(3,3) = 1.5;//横向角度误差导数权重
+    _matrix_Q(2,2) = 10;//横向角度误差权重
+    _matrix_Q(3,3) = 5;//横向角度误差导数权重
 
 
 
@@ -157,8 +157,5 @@ bool LaterLQRController::SolveLQRFeedack(const Eigen::MatrixXd& A,const Eigen::M
         //第一次写忘记写
         P = P_next;
     }
-
     return false;
-    
-
 }

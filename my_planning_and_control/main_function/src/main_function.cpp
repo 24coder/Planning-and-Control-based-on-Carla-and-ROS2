@@ -11,13 +11,13 @@ public:
 
 
     //控制器时钟，按照控制时间步来执行控制
-    _control_time_step = 0.01;//10ms执行一次控制
+    _control_time_step = 0.02;//10ms执行一次控制
     _control_timer = this->create_wall_timer(std::chrono::milliseconds(int(_control_time_step*1000)),std::bind(&MyPlanningANDControl::control_run_step,this));
     _longitudinal_pid_controller = std::make_shared<LongitudinalPIDController>();
     _lateral_pid_controller = std::make_shared<LateralPIDController>();
     _lateral_lqr_controller = std::make_shared<LaterLQRController>();
     //规划时钟
-    _planning_time_step = 0.1;//100ms执行一次规划
+    _planning_time_step = 0.2;//100ms执行一次规划
     _reference_line_generator = std::make_shared<ReferenceLine>();//参考线生成器
     _reference_line = std::make_shared<std::vector<PathPoint>>();
     _planning_timer = this->create_wall_timer(std::chrono::milliseconds(int(_planning_time_step*1000)),std::bind(&MyPlanningANDControl::planning_run_step,this));
@@ -107,7 +107,7 @@ private:
   std::vector<derived_object_msgs::msg::Object> _object_arrry;
 
   rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr _target_speed_subscriber;//期望速度订阅方
-  double _target_speed;//期望速度,单位为km/h
+  double _reference_speed;//期望速度,单位为km/h
 
   rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr _path_subscriber;//路径订阅方
   std::shared_ptr<std::vector<PathPoint>> _global_path;//全局路径存储器
@@ -122,15 +122,16 @@ private:
   std::shared_ptr<LongitudinalPIDController> _longitudinal_pid_controller;//纵向控制器
   std::shared_ptr<LateralPIDController> _lateral_pid_controller;//横向PID控制器
   std::shared_ptr<LaterLQRController> _lateral_lqr_controller;//横向LQR控制器
-  rclcpp::TimerBase::SharedPtr _control_timer;
+  rclcpp::TimerBase::SharedPtr _control_timer;//控制器时钟
   double _control_time_step;
 
   //规划环节
   double _planning_time_step;
   rclcpp::TimerBase::SharedPtr _planning_timer;
-  std::shared_ptr<ReferenceLine> _reference_line_generator;
+  std::shared_ptr<ReferenceLine> _reference_line_generator;//参考线生成器
   std::shared_ptr<std::vector<PathPoint>> _reference_line;
   std::shared_ptr<EMPlanner> _emplanner;
+  std::vector<TrajectoryPoint> _trajectory;
 
   //绘图
   #ifdef PLOT
@@ -163,6 +164,11 @@ public:
 
   void imu_cb(sensor_msgs::msg::Imu::SharedPtr imu_msg)
   {
+    if (imu_msg->linear_acceleration.x >= 10 || imu_msg->linear_acceleration.y >= 10)
+    {
+      return;
+    }
+    
     _current_ego_state->ax = imu_msg->linear_acceleration.x;
     _current_ego_state->ay = imu_msg->linear_acceleration.y;
     _current_ego_state->flag_imu = true;
@@ -177,7 +183,7 @@ public:
   //速度指令订阅方回调函数，获取有ad_agent发布的速度指令
   void target_speed_cb(std_msgs::msg::Float64::SharedPtr msg)
   {
-    _target_speed = msg->data;
+    _reference_speed = msg->data;
   }
 
   void path_cb(nav_msgs::msg::Path::SharedPtr waypoints)
@@ -249,14 +255,19 @@ public:
     }
     
     _reference_line_publisher->publish(nav_reference_line);
-
+    RCLCPP_INFO(this->get_logger(),"mian错误定位1");
+    //调用emplanner获取轨迹
+    auto current_time = this->get_clock()->now();
+    _emplanner->planning_run_step(_reference_line,_current_ego_state,_object_arrry,_trajectory);
+    
+    RCLCPP_INFO(this->get_logger(),"mian错误定位2");
     #ifdef PLOT
     //绘图，因为rviz的可视化没整明白
     if(_count_plot % 20 == 0)
     {
       matplot::figure(_reference_line_figure_handle);
       matplot::cla();
-      std::vector<double> global_x,global_y,reference_x,reference_y;
+      std::vector<double> global_x,global_y,reference_x,reference_y,trajectory_x,trajectory_y;
       for (auto &&path_point : *_global_path)
       {
         global_x.push_back(path_point.x);
@@ -272,16 +283,29 @@ public:
         reference_y.push_back(path_point.y);
       }
       matplot::plot(reference_x,reference_y,"--rx");
+
+      int plot_index = 0;
+      for (auto &&trajectory_point : _trajectory)
+      {
+        if (plot_index % 10 == 0)
+        {
+          trajectory_x.emplace_back(trajectory_point.x);
+          trajectory_y.emplace_back(trajectory_point.y);
+        }
+        plot_index ++ ;
+
+      }
+      
+      matplot::plot(trajectory_x, trajectory_y,"-b*");
+
+      matplot::plot({_current_ego_state->x}, {_current_ego_state->y}, "ro");
       matplot::hold(false);
       //h->draw();
     }
     _count_plot++ ;
+
     #endif
-
-
-    //调用emplanner获取轨迹
-    auto current_time = this->get_clock()->now();
-    _emplanner->planning_run_step(_reference_line,_current_ego_state,_object_arrry,current_time);
+    RCLCPP_INFO(this->get_logger(),"main错误定位3");
   }
 
   void control_run_step()//单步控制
@@ -297,8 +321,14 @@ public:
       RCLCPP_INFO(this->get_logger(),"等待参考线信息......");
       return;
     }
+    if (_trajectory.empty())
+    {
+      RCLCPP_INFO(this->get_logger(),"等待轨迹信息......");
+      return;
+    }
+    
     //目标速度为0
-    if(_target_speed == 0.0)
+    if(_reference_speed == 0.0)
     {
       emergency_stop();
       return;
@@ -306,33 +336,73 @@ public:
 
     //转换为轨迹点
     //确定匹配点
-    TrajectoryPoint match_point;
-    double min_distance_match_point = 1e10;
-    double distance_match_point = 0;
-    int match_point_index = 0;
-    for (int i = 0; i < (int)_reference_line->size(); i++)
-    {
-      distance_match_point = std::hypot(_current_ego_state->x - _reference_line->at(i).x,
-                                        _current_ego_state->y - _reference_line->at(i).y);
-      if(distance_match_point < min_distance_match_point)
-      {
-        min_distance_match_point = distance_match_point;
-        match_point_index = i;
-      } 
-    }
-    match_point.x = _reference_line->at(match_point_index).x;
-    match_point.y = _reference_line->at(match_point_index).y;
-    match_point.heading = _reference_line->at(match_point_index).heading;
-    match_point.kappa = _reference_line->at(match_point_index).kappa;
-    match_point.v = _target_speed;
+    // TrajectoryPoint match_point;
+    // double min_distance_match_point = 1e10;
+    // double distance_match_point = 0;
+    // int match_point_index = 0;
+    // for (int i = 0; i < (int)_reference_line->size(); i++)
+    // {
+    //   distance_match_point = std::hypot(_current_ego_state->x - _reference_line->at(i).x,
+    //                                     _current_ego_state->y - _reference_line->at(i).y);
+    //   if(distance_match_point < min_distance_match_point)
+    //   {
+    //     min_distance_match_point = distance_match_point;
+    //     match_point_index = i;
+    //   } 
+    // }
+    // match_point.x = _reference_line->at(match_point_index).x;
+    // match_point.y = _reference_line->at(match_point_index).y;
+    // match_point.heading = _reference_line->at(match_point_index).heading;
+    // match_point.kappa = _reference_line->at(match_point_index).kappa;
+    // match_point.v = _reference_speed;
+
+    //由轨迹搜索出目标点
+    TrajectoryPoint target_point;
+    double cur_time = this->now().seconds();
+    double predicted_time = cur_time + 0.2;
+    int target_point_index = -1;
+    // RCLCPP_INFO(this->get_logger(),"当前时刻:%.3f",cur_time.seconds());
+    // int index = 1;
+    // for (size_t i = 0; i < _trajectory->size(); i++)
+    // {
+    //   RCLCPP_INFO(this->get_logger(), "(序号%d:,x:%.3f, y:%.3f, heading:%.3f, v:%.3f, a_tau:%.3f, time_stampe:%.3f)",
+    //   index,_trajectory->at(i).x,_trajectory->at(i).y,_trajectory->at(i).heading,_trajectory->at(i).v,_trajectory->at(i).a_tau,_trajectory->at(i).time_stamped.seconds());
+    //   index++;
+    // }
     
+    for (int i = 0; i < (int)_trajectory.size() - 1; i++)
+    {
+      if (predicted_time >= _trajectory.at(i).time_stamped && predicted_time < _trajectory.at(i+1).time_stamped)
+      {
+        target_point_index = i;
+        break;
+      }
+    }
+    double delta_t = (_trajectory.at(target_point_index+1).time_stamped - _trajectory.at(target_point_index).time_stamped);
+    double dt = predicted_time - _trajectory.at(target_point_index).time_stamped;
+
+    double k_x = (_trajectory.at(target_point_index+1).x - _trajectory.at(target_point_index).x)/delta_t;
+    target_point.x = _trajectory.at(target_point_index).x + k_x*dt;
+
+    double k_y = (_trajectory.at(target_point_index+1).y - _trajectory.at(target_point_index).y)/delta_t;
+    target_point.y = _trajectory.at(target_point_index).y + k_y*dt;
+
+    double k_v = (_trajectory.at(target_point_index+1).v - _trajectory.at(target_point_index).v)/delta_t;
+    target_point.v = _trajectory.at(target_point_index).v + k_v*dt;
+
+    double k_heading = (_trajectory.at(target_point_index+1).heading - _trajectory.at(target_point_index).heading)/delta_t;
+    target_point.heading = _trajectory.at(target_point_index).heading + k_heading*dt;
+
+    double k_a_tau = (_trajectory.at(target_point_index+1).a_tau - _trajectory.at(target_point_index).a_tau)/delta_t;    
+    target_point.a_tau = _trajectory.at(target_point_index).a_tau + k_a_tau*dt;
+
     #ifdef MAIN_DEBUG
-    RCLCPP_INFO(this->get_logger(),"当前位姿(%.3f,%.3f,%.3f),期望位姿(%.3f,%.3f,%.3f)",
-                _current_ego_state->x,_current_ego_state->y,_current_ego_state->heading,
-                match_point.x,match_point.y,match_point.heading);
-    RCLCPP_INFO(this->get_logger(),"参考线起点位姿(%.3f,%.3f,%.3f),参考线终点位姿(%.3f,%.3f,%.3f)",
-                _reference_line->at(0).x,_reference_line->at(0).y,_reference_line->at(0).heading,
-                _reference_line->back().x,_reference_line->back().y,_reference_line->back().heading);
+    RCLCPP_INFO(this->get_logger(),"当前位姿(%.3f,%.3f,%.3f,%.3f),期望位姿(%.3f,%.3f,%.3f,%.3f)",
+                _current_ego_state->x,_current_ego_state->y,_current_ego_state->heading,_current_ego_state->v,
+                target_point.x,target_point.y,target_point.heading, target_point.v);
+    // RCLCPP_INFO(this->get_logger(),"参考线起点位姿(%.3f,%.3f,%.3f),参考线终点位姿(%.3f,%.3f,%.3f)",
+    //             _reference_line->at(0).x,_reference_line->at(0).y,_reference_line->at(0).heading,
+    //             _reference_line->back().x,_reference_line->back().y,_reference_line->back().heading);
 
     #endif
     
@@ -351,9 +421,9 @@ public:
 
     //计算并发布控制指令
     carla_msgs::msg::CarlaEgoVehicleControl control_msg;
-    control_msg.throttle = _longitudinal_pid_controller->run_step(_target_speed,_current_ego_state->v*3.6);
+    control_msg.throttle = _longitudinal_pid_controller->run_step(target_point.v,_current_ego_state->v);
     //control_msg.steer = _lateral_pid_controller->run_step(target_pose,*_current_ego_state);
-    control_msg.steer = _lateral_lqr_controller->run_step(match_point,*_current_ego_state,_control_time_step);
+    control_msg.steer = _lateral_lqr_controller->run_step(target_point,*_current_ego_state,_control_time_step);
     control_msg.hand_brake = false;
     control_msg.manual_gear_shift = false;
     control_msg.reverse = false;

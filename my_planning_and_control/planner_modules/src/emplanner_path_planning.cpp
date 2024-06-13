@@ -112,7 +112,7 @@ void EMPlanner::generate_convex_space(const std::vector<FrenetPoint>& final_dp_p
                             const std::vector<FrenetPoint>& static_obs_sl_point_set, std::vector<double>& path_l_max, std::vector<double>& path_l_min)
 {
     double obs_length = 5.0;//障碍物长度
-    double obs_width = 2.0;//障碍物宽度
+    double obs_width = 3.0;//障碍物宽度
     for (size_t i = 0; i < final_dp_path.size(); i++)
     {
         path_l_max.emplace_back(road_up_boundary);
@@ -133,6 +133,10 @@ void EMPlanner::generate_convex_space(const std::vector<FrenetPoint>& final_dp_p
             {
                 int start_index = find_index_for_obs_on_path(final_dp_path, static_obs_sl_point_set[i].s - obs_length/2.0);
                 int end_index = find_index_for_obs_on_path(final_dp_path, static_obs_sl_point_set[i].s + obs_length/2.0);
+                if (start_index == -1 || end_index == -1)//索引值等于-1表示在界外
+                {
+                    continue;
+                }
                 for (int j = start_index; j <= end_index; j++)
                 {
                     path_l_min[j] = std::max(path_l_min[j], static_obs_sl_point_set[i].l + obs_width/2.0);
@@ -141,9 +145,13 @@ void EMPlanner::generate_convex_space(const std::vector<FrenetPoint>& final_dp_p
             }
             else//右侧绕行
             {
-                size_t start_index = find_index_for_obs_on_path(final_dp_path, static_obs_sl_point_set[i].s - obs_length/2.0);
-                size_t end_index = find_index_for_obs_on_path(final_dp_path, static_obs_sl_point_set[i].s + obs_length/2.0);
-                for (size_t j = start_index; j <= end_index; j++)
+                int start_index = find_index_for_obs_on_path(final_dp_path, static_obs_sl_point_set[i].s - obs_length/2.0);
+                int end_index = find_index_for_obs_on_path(final_dp_path, static_obs_sl_point_set[i].s + obs_length/2.0);
+                if (start_index == -1 || end_index == -1)//索引值等于-1表示在界外
+                {
+                    continue;
+                }
+                for (int j = start_index; j <= end_index; j++)
                 {
                     path_l_max[j] = std::min(path_l_max[j], static_obs_sl_point_set[i].l - obs_width/2.0);
                 }
@@ -158,11 +166,11 @@ int EMPlanner::find_index_for_obs_on_path(const std::vector<FrenetPoint>& final_
     int index = -1;
     if (static_obs_s < final_dp_path.front().s)
     {
-        index = -1;
+        index = 0;
     }
     else if(static_obs_s >= final_dp_path.back().s)
     {
-        index = -1;
+        index = (int)final_dp_path.size()-1;
     }
     else
     {
@@ -173,10 +181,12 @@ int EMPlanner::find_index_for_obs_on_path(const std::vector<FrenetPoint>& final_
                 if (std::abs(static_obs_s - final_dp_path[i].s) >= std::abs(final_dp_path[i+1].s - static_obs_s))
                 {
                     index = i+1;
+                    break;
                 }
                 else
                 {
                     index = i;
+                    break;
                 }
             }
         }
@@ -247,7 +257,10 @@ bool EMPlanner::path_QP_planning(const std::vector<FrenetPoint>& final_dp_path, 
     f_ddl_end[3*(point_num-1) + 2] = -2.0*ddl_desire;
 
     f.resize(3*point_num);
-    f = f_mid + f_l_end + f_dl_end + f_ddl_end;
+    f = weight_coeficients.path_qp_w_mid * f_mid + 
+        weight_coeficients.path_qp_w_l_end * f_l_end +
+        weight_coeficients.path_qp_w_dl_end * f_dl_end + 
+        weight_coeficients.path_qp_w_ddl_end * f_ddl_end;
     
 
     //------------------建立约束------------------
@@ -280,9 +293,9 @@ bool EMPlanner::path_QP_planning(const std::vector<FrenetPoint>& final_dp_path, 
     //2.2不等式约束(碰撞约束)
     Eigen::SparseMatrix<double> A_collision_avoidance;
     A_collision_avoidance.resize(4*point_num, 3*point_num);
-    double d1 = 2.5;
-    double d2 = 2.5;
-    double car_width = 2.0;
+    double d1 = 3;
+    double d2 = 2;
+    double car_width = 3;
     for (size_t i = 0; i < point_num; i++)
     {
         A_collision_avoidance.insert(4*i + 0, 3*i + 0) = 1;
@@ -331,14 +344,14 @@ bool EMPlanner::path_QP_planning(const std::vector<FrenetPoint>& final_dp_path, 
         up_boundary_collision_avoidance[4*i + 2] = ubi - car_width/2.0;
         up_boundary_collision_avoidance[4*i + 3] = ubi + car_width/2.0;
     }
-    // low_boundary_collision_avoidance[0] = std::numeric_limits<double>::lowest();
-    // low_boundary_collision_avoidance[1] = std::numeric_limits<double>::lowest();
-    // low_boundary_collision_avoidance[2] = std::numeric_limits<double>::lowest();
-    // low_boundary_collision_avoidance[3] = std::numeric_limits<double>::lowest();
-    // up_boundary_collision_avoidance[0] = std::numeric_limits<double>::max();
-    // up_boundary_collision_avoidance[1] = std::numeric_limits<double>::max();
-    // up_boundary_collision_avoidance[2] = std::numeric_limits<double>::max();
-    // up_boundary_collision_avoidance[3] = std::numeric_limits<double>::max();
+    low_boundary_collision_avoidance[0] = std::numeric_limits<double>::lowest();
+    low_boundary_collision_avoidance[1] = std::numeric_limits<double>::lowest();
+    low_boundary_collision_avoidance[2] = std::numeric_limits<double>::lowest();
+    low_boundary_collision_avoidance[3] = std::numeric_limits<double>::lowest();
+    up_boundary_collision_avoidance[0] = std::numeric_limits<double>::max();
+    up_boundary_collision_avoidance[1] = std::numeric_limits<double>::max();
+    up_boundary_collision_avoidance[2] = std::numeric_limits<double>::max();
+    up_boundary_collision_avoidance[3] = std::numeric_limits<double>::max();
 
     //2.3规划起点约束
     Eigen::SparseMatrix<double> A_start_point;
@@ -373,10 +386,7 @@ bool EMPlanner::path_QP_planning(const std::vector<FrenetPoint>& final_dp_path, 
     
     //-----------------求解-------------------------------
     //3.1初始化
-    _path_qp_solver.data()->clearHessianMatrix();
-    _path_qp_solver.data()->clearLinearConstraintsMatrix();
-    _path_qp_solver.clearSolverVariables();
-    _path_qp_solver.clearSolver();
+
 
     _path_qp_solver.data()->setNumberOfVariables(3*point_num);
     _path_qp_solver.data()->setNumberOfConstraints(6*point_num + 1);//这里可以用A_total的行数，但是可以用这个数做个验证，如果对不上就是哪里写错了
@@ -396,8 +406,13 @@ bool EMPlanner::path_QP_planning(const std::vector<FrenetPoint>& final_dp_path, 
         qp_path_point.l_prime = solution[3*i + 1];
         qp_path_point.l_prime_prime = solution[3*i + 2];
        // std::cout << qp_path_point.s << " " << qp_path_point.l << " " << std::endl;
-        init_qp_path.push_back(qp_path_point);
+        init_qp_path.emplace_back(qp_path_point);
     }
+
+    _path_qp_solver.data()->clearHessianMatrix();
+    _path_qp_solver.data()->clearLinearConstraintsMatrix();
+    _path_qp_solver.clearSolverVariables();
+    _path_qp_solver.clearSolver();
 
     // std::cout << "----------------目标函数矩阵-----------------"<< std::endl;
     // std::cout << "****************H_ref************************"<< std::endl;
@@ -439,19 +454,19 @@ bool EMPlanner::path_QP_planning(const std::vector<FrenetPoint>& final_dp_path, 
     // std::cout << A_collision_avoidance << std::endl;
     // std::cout << "----------------碰撞上界-----------------"<< std::endl;
     // std::cout << up_boundary_collision_avoidance << std::endl;
-    std::cout << "----------------凸空间上界-----------------"<< std::endl;
-    for (auto &&i : final_dp_path_lmax)
-    {
-        std::cout << i << " ";
-    }
+    // std::cout << "----------------凸空间上界-----------------"<< std::endl;
+    // for (auto &&i : final_dp_path_lmax)
+    // {
+    //     std::cout << i << " ";
+    // }
     // std::cout << std::endl;
     // std::cout << "----------------碰撞下界-----------------"<< std::endl;
     // std::cout << low_boundary_collision_avoidance << std::endl;
-    std::cout << "----------------凸空间下界-----------------"<< std::endl;
-    for (auto &&i : final_dp_path_lmin)
-    {
-        std::cout << i << " ";
-    }
+    // std::cout << "----------------凸空间下界-----------------"<< std::endl;
+    // for (auto &&i : final_dp_path_lmin)
+    // {
+    //     std::cout << i << " ";
+    // }
     // std::cout << std::endl;
     // std::cout << "----------------起点矩阵-----------------"<< std::endl;
     // std::cout << A_start_point << std::endl;
@@ -463,20 +478,26 @@ bool EMPlanner::path_QP_planning(const std::vector<FrenetPoint>& final_dp_path, 
     // std::cout <<"----------------------最优解------------------" <<std::endl;
     // for (auto &&i : init_qp_path)
     // {
-    //     std::cout << "("<< i.s << ", " << i.l << ")" << " ";
+    //     std::cout << "("<< i.s << ", " << i.l << ", "<< i.l_prime << ", " << i.l_prime_prime << ")" << " ";
     // }
     // std::cout << std::endl;
 
+    std::cout << "参考线代价:" << weight_coeficients.path_qp_w_ref * 2* solution.transpose() * H_ref.transpose() * H_ref * solution << std::endl;
+    std::cout << "dl代价:" <<  weight_coeficients.path_qp_w_dl * 2 * solution.transpose() * H_dl.transpose() * H_dl * solution << std::endl;
+    std::cout << "ddl代价:" << weight_coeficients.path_qp_w_ddl * 2 * solution.transpose() * H_ddl.transpose() * H_ddl * solution << std::endl;   
+    std::cout << "dddl代价:" <<  weight_coeficients.path_qp_w_dddl * 2* solution.transpose() * H_dddl.transpose() * H_dddl * solution << std::endl;
+    std::cout << "mid代价:" <<  weight_coeficients.path_qp_w_mid * (2* solution.transpose() * H_mid.transpose() * H_mid * solution  + f_mid.transpose() * solution)<< std::endl;
+ 
     // std::cout <<"---------------------H矩阵-------------------------" << std::endl;
     // std::cout << H << std::endl;
     // std::cout <<"---------------------f矩阵-------------------------" << std::endl;
     // std::cout << f << std::endl;
     // std::cout <<"---------------------A矩阵-------------------------" << std::endl;
     // std::cout << A_total << std::endl;
-    std::cout <<"---------------------约束上界矩阵-------------------------" << std::endl;
-    std::cout << up_boundary_total << std::endl;
-    std::cout <<"---------------------约束下界矩阵-------------------------" << std::endl;
-    std::cout << low_boundary_total << std::endl;
+    // std::cout <<"---------------------约束上界矩阵-------------------------" << std::endl;
+    // std::cout << up_boundary_total << std::endl;
+    // std::cout <<"---------------------约束下界矩阵-------------------------" << std::endl;
+    // std::cout << low_boundary_total << std::endl;
     
     return true;
 }

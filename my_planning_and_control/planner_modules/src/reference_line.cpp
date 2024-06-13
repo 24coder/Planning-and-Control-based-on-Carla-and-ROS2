@@ -180,10 +180,6 @@ bool ReferenceLine::run_step(std::shared_ptr<VehicleState> current_ego_state, st
     }
 
     //3-4：设置求解器矩阵
-    _smooth_solver->data()->clearHessianMatrix();
-    _smooth_solver->data()->clearLinearConstraintsMatrix();
-    _smooth_solver->clearSolverVariables();
-    _smooth_solver->clearSolver();
 
     _smooth_solver->data()->setNumberOfVariables(2 * var_num);
     _smooth_solver->data()->setNumberOfConstraints(2 * var_num);
@@ -210,6 +206,10 @@ bool ReferenceLine::run_step(std::shared_ptr<VehicleState> current_ego_state, st
 
     Calculate_heading_and_kappa(reference_line);
 
+    _smooth_solver->data()->clearHessianMatrix();
+    _smooth_solver->data()->clearLinearConstraintsMatrix();
+    _smooth_solver->clearSolverVariables();
+    _smooth_solver->clearSolver();
     return true;
 
  

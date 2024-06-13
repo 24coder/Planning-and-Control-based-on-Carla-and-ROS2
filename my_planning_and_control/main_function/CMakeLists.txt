@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.5)
 project(main_function)
+set(CMAKE_CXX_STANDARD 11)
 
+add_compile_definitions(MAIN_DEBUG)
+add_compile_definitions(PLOT)
 # Default to C99
 if(NOT CMAKE_C_STANDARD)
   set(CMAKE_C_STANDARD 99)
@@ -39,7 +42,7 @@ find_package(carla_waypoint_types REQUIRED)
 aux_source_directory(${CMAKE_CURRENT_SOURCE_DIR}/../controller_modules/src SRC_CONTROL)
 aux_source_directory(${CMAKE_CURRENT_SOURCE_DIR}/../planner_modules/src SRC_PLANNING)
 aux_source_directory(${CMAKE_CURRENT_SOURCE_DIR}/../general_modules/src SRC_GENERAL)
-#message(ERROR ${SRC_PLANNING})
+# message(ERROR ${SRC_PLANNING})
 add_executable(main_function src/main_function.cpp ${SRC_CONTROL} ${SRC_PLANNING} ${SRC_GENERAL})
 
 target_include_directories(main_function PUBLIC

@@ -5,6 +5,8 @@ void PolynomialCurve::curve_fitting(const double& start_s, const double& start_l
 {
     Eigen::MatrixXd A;
     Eigen::VectorXd B;
+    //double corrected_start_l_prime_prime = std::min(start_l_prime_prime, 10.0);
+    double corrected_start_l_prime_prime = start_l_prime_prime;
     A.resize(6,6);
     B.resize(6);
     A << 1, start_s,  std::pow(start_s,2),   std::pow(start_s,3),   std::pow(start_s,4),   std::pow(start_s,5),
@@ -14,7 +16,7 @@ void PolynomialCurve::curve_fitting(const double& start_s, const double& start_l
          0,   1,    2*std::pow(end_s,1),   3*std::pow(end_s,2),   4*std::pow(end_s,3),   5*std::pow(end_s,4),
          0,   0,        2,                 6*std::pow(end_s,1),  12*std::pow(end_s,2),  20*std::pow(end_s,3);
 
-    B << start_l,start_l_prime,start_l_prime_prime,end_l,end_l_prime,end_l_prime_prime;
+    B << start_l,start_l_prime,corrected_start_l_prime_prime,end_l,end_l_prime,end_l_prime_prime;
     _coefficients =  A.fullPivLu().solve(B);
 
     // std::cout << A << std::endl << B <<std::endl << _coefficients << std::endl;
